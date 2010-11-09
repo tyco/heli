@@ -71,16 +71,24 @@ class HeliPlotter(HasTraits):
    
     def plot_data(self, datadict):
         
+        if len(datadict.keys()) == 0:
+            return
         if not datadict.has_key(self.scantype):
             print "discarding scan types %s" % str(datadict.keys())
             return
             
         typedata = datadict[self.scantype]
+        print typedata
+        if len(typedata.shape) < 2:
+            print "invalid data: " + str(typedata.shape)
+            return
         if typedata.shape[1] <= self.channel:
             print "not enough channels, type %d has %d chs" % (self.scantype, typedata.shape[1])
             return
-            
+        
         chdata=typedata[:,self.channel]
+        
+        
         
         chlen=len(chdata)
         self.num_ticks += chlen
@@ -98,10 +106,12 @@ class HeliPlotter(HasTraits):
         return
         
     def _scantype_changed(self):
-        self.clear_data()
+        #self.clear_data()
+        pass    
         
     def _channel_changed(self):
-        self.clear_data()
+        #self.clear_data()
+        pass
         
     def clear_data(self):
         self.viewer.data = np.zeros(0)

@@ -1,5 +1,8 @@
 import wx
 import numpy as np
+import threading
+import serial
+import time
 
 #ETSConfig.enable_toolkit = 'qt4'
 from display import HeliDisplay, HeliPlotter
@@ -15,7 +18,7 @@ def parse(data, block, scancount):
         typebyte = ord(block[index])
         if typebyte & 0xF0 != 0x50:
             index = index + 1
-            skipped = skipped + 1            
+            skipped = skipped + 1
             continue
         scantype = typebyte & 0xF
         index = index+1
@@ -34,12 +37,13 @@ def parse(data, block, scancount):
         if scanlen % 2 != 0: print "odd scan length!"
         num_chs = scanlen / 2
         # create a np array directly from this scan
-        new_scan = np.ndarray(shape=(1,num_chs), dtype=np.int16, buffer=block[index:index+scanlen])
+        new_scan = np.ndarray(shape=(1,num_chs), dtype=np.int16, buffer=block[index:index+scanlen], order='F')
         index += scanlen
         
         if data.has_key(scantype):
             # append this scan as a row in the data matrix
             data[scantype] = np.vstack((data[scantype], new_scan))
+            print data[scantype].shape
         else:
             data[scantype] = new_scan
     
@@ -48,19 +52,45 @@ def parse(data, block, scancount):
 # 10 scans at 10 Hz = 100 Hz
 block_size = 10*25
 
-def generate_data():    
-    masterdata = {}
-    f=open('../heli_data/imu_capture.1', 'rb')
-    while(True):
+class SerialThread(threading.Thread):
+    
+    controller = None
+
+    def run(self):
         leftover = ""
         scancount = -1
-        r = f.read(block_size)
-        while(len(r) > 0):
-            (leftover, scancount) = parse(masterdata, leftover + r, scancount)
-            yield masterdata
-            masterdata = {}
+    
+        s=serial.Serial(22, baudrate=9600, timeout=.05)
+        s.write("SET_SCAN_RATE 10\r")
+        time.sleep(1)
+        s.write("START_SCAN ON\r")
+        
+        while True:
+            r=s.read(4096)
+            data={}
+            (leftover, scancount) = parse(data, leftover + r, scancount)
+            self.controller.plot_data(data)
+
+
+class GenerateThread(threading.Thread):
+    
+    controller = None
+    
+    def run(self):
+        
+        f=open('../heli_data/imu_capture.1', 'rb')
+        
+        while(True):
+            leftover = ""
+            scancount = -1
             r = f.read(block_size)
-        f.seek(0)
+            while(len(r) > 0):
+                data={}
+                (leftover, scancount) = parse(data, leftover + r, scancount)
+                self.controller.plot_data(data)
+                time.sleep(100)
+                r = f.read(block_size)
+            f.seek(0)
 
     
 class HeliApp(wx.PySimpleApp):
@@ -72,14 +102,17 @@ class HeliApp(wx.PySimpleApp):
         # Pop up the windows for the two objects
         self.viewer.edit_traits()
         self.controller.edit_traits()
-       
-        self.generator = generate_data()
         
         # Set up the timer and start it up
-        self.setup_timer(self.controller)
+        self.setup_read(self.controller)
         return True
     
-    def setup_timer(self, controller):    
+    def setup_read(self, controller):
+        self.t = SerialThread()
+        self.t.controller = controller
+        self.t.start()
+        return
+        
         # Create a new WX timer
         timerId = wx.NewId()
         self.timer = wx.Timer(self, timerId)
